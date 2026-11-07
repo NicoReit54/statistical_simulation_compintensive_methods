@@ -94,32 +94,491 @@ But okay, why does it affect us here then? Because of machine precision: At a=1e
 
 ### 6. Suppose you receive measurements in nanometres with values around $10^{12}$, but the scientifically relevant variation is only a few units. Would you preprocess the data before computing descriptive statistics? If yes, what transformation would you use and why?
 
-As we have just shown, shifting by a constant is not influencing the statistics itself. Hence to have a proper view on the relativeness of the descriptive statistics, I would subtract by this common value of $10^{12}$. Still also things like the mean are only shifted then and can still be reproduced by readding that subtrahend at the end. 
+As we have just shown, shifting by a constant is not influencing the statistics itself. Hence to have a proper view on the relativeness of the descriptive statistics, I would subtract by this common value of $10^{12}$. Still also things like the mean are only shifted then and can still be reproduced by readding that subtrahend at the end.
 
 # Exercise 2 - A probability that disappears
+
+### 1. Compute the upper-tail probability in each of the following ways:
+
 ```{r, echo=TRUE}
+x_tail <- c(5, 8, 10, 20, 30, 40)
+
+data.frame(
+  x = x_tail,
+  pnorm = pnorm(x_tail),
+  one_minus_pnorm = 1 - pnorm(x_tail),
+  pnorm_upper_tail = pnorm(x_tail, lower.tail = FALSE),
+  log_upper_tail = pnorm(x_tail, lower.tail = FALSE, log.p = TRUE)
+)
+```
+
+### 2. and 3. Identify where the first expression begins to give a misleading answer and explain why 1 - pnorm(x) can fail even when pnorm(x) itself is accurately compute
+
+At x = 10 already because the machine precision doesn't allow for more precision here when we do the subtraction of 1 - pnorm. This is just rounded to 1 or 0 respectively. Using pnorm with lower.tail = FALSE computes the upper tail directly instead of doing the subtraction, which avoids the rounding issue when subtracting.
+
+### 4. For each x, recover a probability from the log-probability using exp(). At what point does even that conversion become unhelpful
+
+```{r, echo=TRUE}
+x_tail <- c(5, 8, 10, 20, 30, 35, 36, 37, 38, 39,40)
+
+data.frame(
+  x = x_tail,
+  pnorm = pnorm(x_tail),
+  pnorm_upper_tail = pnorm(x_tail, lower.tail = FALSE),
+  log_upper_tail = pnorm(x_tail, lower.tail = FALSE, log.p = TRUE),
+  `exp(log_upper_tail)` = exp(pnorm(x_tail, lower.tail = FALSE, log.p = TRUE)),
+  check.names = FALSE
+
+)
+```
+
+So as can be seen quite unhelpful at the stage of x = 39 when it turns 0 again.
+
+### 5. Imagine a multiple-testing problem with a test statistic corresponding to Z = 9. You need the p-value to compare it with a very stringent threshold. Which representation of the probability would you carry through the computation, and why?
+
+I would go for the log-probability representation as this is exactly a situation where we would need precicion (as indicated by the "stringent threshold"). If we were to report on 1-Z via 1-pnorm(9) we would already get 0, which is well quite wrong here.
+
+# Exercise 3 - Comparing two models without computing their likelihood
+
+### Tasks 1-3
+
+```{r, echo=TRUE}
+set.seed(2)
+y <- rbinom(5000, size = 1, prob = 0.03)
+p1 <- 0.03
+p2 <- 0.035
+
+L <- function(p, y) {
+  result <- prod(p**y * (1 - p)**(1-y))
+  return(result)
+}
+
+l <- function(p, y) {
+  return(sum(y * log(p) + (1 - y) * log(1 - p)))
+}
+
+
+data.frame(
+  "$p_1$" = c(p1, p2),
+  "$L(p)$" = c(L(p1, y), L(p2, y)),
+  "$l(p)$" = c(l(p1, y), l(p2, y)),
+  check.names = FALSE)
 
 ```
 
+We can see the theory from the lecture confirmed: *The product underflows to zero, but the log-likelihood is still finite.*
 
-
+### 4. Compute the log-likelihood difference l(p1) - l(p2). Explain why this quantity can be more useful than either likelihood itself.
 
 ```{r, echo=TRUE}
+print(l(p1, y)) 
+print(l(p2, y))
+
+l(p1, y) - l(p2, y)
 
 ```
 
+A positive value of the difference means the data is in favor of $p_1$ more than $p_2$. A negative value means the opposite. The magnitude says how strong that support is on the log scale and it is also numerically save (whole idea of this exercise I suppose). So the subtraction should never really have an underflow as opposed to the 0 rounding for the L(p) function!
 
+### 5. Compute the likelihood ratio L(p1)/ L(p2) in a numerically stable way using the log-likelihoods.
 
+Easily via log and then exp again:
 
+$$
+log(L(p_1) / L(p_2)) = log(L(p_1)) - log(L(p_2)) = l(p_1, y) - l(p_2, y)
+$$
+
+$$
+L(p_1) / L(p_2) = exp(l(p_1, y) - l(p_2, y))
+$$
 
 ```{r, echo=TRUE}
+log_LR <- l(p1, y) - l(p2, y)
+LR <- exp(log_LR)
+print(LR)
+print(L(p1, y) / L(p2, y))   # For comparison, the direct way fails: division by zero :(
 
 ```
 
+### 6. Why is this issue especially important in Bayesian computation, maximum likelihood estimation, and sequential analysis?
 
+- Bayesian: Because e.g. the posterior directly depends on the likelihood. Meaning if we do not take case of the underflow or the such, then the calculation could become wrong along the way
 
+- Maximum Likelihood Estimation: Essentially the same reason, the estimation needs the Likelihood function to be unequal zero (or at least not zero because of technical reasons!) in order to find a fitting distribution for the data
 
+- Sequential Analysis: Not done that yet actually, but as far as I can gather from Wikipedia this directly depends on the likelihoods again: $S_i = S_{i-1} + log\lambda_i$ with the lambda being the ratio of Likelihoods before and after. Here we could easily over or underflow again in each step, rendering the result useless!
+
+# Exercise 4 - Diagnosing a numerically suspicious covariance matrixo
+
+### Tasks 1 to 6
 
 ```{r, echo=TRUE}
+# Consider two variables that are almost linear copies of each other:
+set.seed(3)
+n   <- 5000
+u   <- rnorm(n)
+x1  <- 1e8 + u
+x2  <- 1e8 + u + rnorm(n, sd = 1e-4)
+X   <- cbind(x1, x2)
+
+# 1. Covariance
+covar_matrix <- cov(X)
+print(covar_matrix)
+
+# 2. Correlation bet. x1 and x2
+correlation  <- cor(x1, x2)
+print(correlation, digits=16)
+
+# 3. Eigenvals of the covariance matrix
+eigenvals <- eigen(covar_matrix)
+
+# 4. Covariance with one-identity
+cov_simple <- function(a, b) {
+  n <- length(a)
+  cat("E(a, b) = ", mean(a*b), "\n") # just to show again machine precision!
+  (mean(a * b) - mean(a) * mean(b)) * n / (n - 1)
+}
+
+cov_alternative <- matrix(c(cov_simple(x1, x1), cov_simple(x1, x2),
+                            cov_simple(x2, x1), cov_simple(x2, x2)),
+                          nrow = 2)
+print("cov(x)")
+print(covar_matrix)
+print(eigenvals)
+
+print("")
+print("one-pass")
+print(cov_alternative)
+print(eigen(cov_alternative))
+
+# Repeat the calculation after centring both variables first
+Xc  <- scale(X, center = TRUE, scale = FALSE)
+x1c <- scale(x1, center = TRUE, scale = FALSE)
+x2c <- scale(x2, center = TRUE, scale = FALSE)
+
+
+covar_matrix_c  <- cov(Xc)
+correlation_c   <- cor(x1c, x2c)
+eigenvals_c     <- eigen(covar_matrix)
+
+# Cov(X, Y) = E(XY) - E(X)E(Y)
+cov_alternative_c <- matrix(c(cov_simple(x1c, x1c), cov_simple(x1c, x2c),
+                              cov_simple(x2c, x1c), cov_simple(x2c, x2c)),
+                                nrow = 2)
+print("cov(x)")
+print(covar_matrix_c)
+print(eigenvals_c)
+
+print("")
+print("one-pass")
+print(cov_alternative_c)
+print(eigen(cov_alternative_c))
+
 
 ```
+
+### 7. A statistical procedure requires inversion of the covariance matrix. What warning signs in this example would make you cautious about doing that directly? Suggest at least two safer approaches.
+
+- First thing for sure is the issue with eigenvalue = 0, as this means a matrix would not even be invertible
+
+- Also if we see the correlation is really close to 1 (which it is here, irrespective of the floating issues) then we might also run into a singular matrix, since the columns seem to be quite heavily related.
+
+In any way for these cases we
+
+(a) Should center the data as we did above (and is done by the native cov() function) so we can still work with it in case it is really a non-singular matrix (and not only because of machine precision)
+
+(b) Could also "fall back" to using SVD where "Small singular values directly reveal near rank-deficiency"
+
+# Exercise 5 - Whitening is not unique
+
+### 1. Generate the random data
+
+```{r, echo=TRUE}
+set.seed(3)
+n   <- 1000
+dims <- 5
+
+# Independent std normal variables
+independent <- matrix(rnorm(n * dims), nrow = n, ncol = dims)
+cov_ind <- cov(independent)
+
+suitable_matrix <- matrix(c(
+  1.0000, 1.200, 0.18, 0.324, 0.1296,
+  1.2000, 4.000, 0.60, 1.080, 0.4320,
+  0.1800, 0.600, 0.25, 0.450, 0.1800,
+  0.3240, 1.080, 0.45, 2.250, 0.9000,
+  0.1296, 0.432, 0.18, 0.900, 1.0000
+), nrow = 5, byrow = TRUE)
+
+# to show it is all > 0, hence positive definite
+print(eigen(suitable_matrix)$values)
+
+```
+
+So, we are supposed to construct this normally distributed matrix *independent (E)* and then multiply it with something else that gives us a non-diagonal covariance matrix. For this we build the *suitable_matrix(A)* (just some random non-diagonal covariance matrix). In order for the new big sample to have the same we multiply them together and it follows that the new covariance will be what we just build
+
+$$
+Cov(E A) = A^T Cov(E) A \approx A^T I A = A^TA
+$$
+
+```{r, echo=TRUE}
+# The Cholesky Decomposition - Compute the Cholesky factorization of a real symmetric positive-definite square matrix. Just to have a upper scale matrix to multiply with and its aso mentioned in the .md file for Numerical Linear Algebra
+A <- chol(suitable_matrix)
+
+
+X <- independent %*% A
+
+# efficiently for row-wise observations as per chapter "Cross-product also appear in covariance"
+Xc <- scale(X, center = TRUE, scale = FALSE)
+S <- crossprod(Xc) / (nrow(Xc) - 1)
+
+print(S)
+print(cov(Xc))
+```
+
+### 2. Compute the eigendecomposition + PCA whitening matrix
+
+```{r, echo=TRUE}
+S_eigen <- eigen(S)
+lambdas <- S_eigen$values
+Qs      <- S_eigen$vectors
+
+W_PCA <- diag(lambdas**(-1/2)) %*% t(Qs)
+
+W_PCA %*% S %*% t(W_PCA) # confirming the Identity
+
+```
+
+```{r, echo=TRUE}
+# applying it now finally
+Z_PCA <- Xc %*% t(W_PCA)
+cov(Z_PCA) # nice also identity here as wanted!
+
+```
+
+### 3. Construct the ZCA whitening matrix
+
+```{r, echo=TRUE}
+W_ZCA <- Qs %*% diag(lambdas**(-1/2)) %*% t(Qs)
+Z_ZCA <- Xc %*% t(W_ZCA)
+cov(Z_ZCA) # nice also identity here as wanted!
+
+# Interestingly, this ZCA is essentially S^-1/2 if we take a look at how it is being constructed. 
+# It is essentially the eigendecomposition of S, just with ^-1/2 scaled eigenvalues... 
+# W_ZCA is then also just a rotation of W_PCA as we have to do Q * W_PCA to get to ZCA...
+
+```
+
+### 4. Compute a Cholesky factorization
+
+```{r, echo=TRUE}
+# attention: chol(S) returns R^TR not LL^T like in the exercise sheet
+R <- chol(S)
+L <- t(R)
+L_inv <- solve(L)
+
+Z_chol <- Xc %*% t(L_inv) 
+print(cov(Z_chol))
+
+L_inv %*% S %*% t(L_inv) # confirming the Identity, interesting
+```
+
+Is the Cholesky factor L a matrix square root of S in the sense that $L^2 = S$. Explain carefully.
+
+```{r, echo=TRUE}
+print(L)
+max(abs(L %*% L - S))
+max(abs(L %*% t(L) - S))
+
+
+```
+
+Since L is not a symmetric matrix, but lower triangular it cannot be directly seen as a square root. But still the values are, because if you do the transposition you still get the view that this is the square root.
+
+### 5. Compare the three whitened data sets.
+
+- Are the transformed observations identical?
+
+Not at all, the differences are on the scale of the data itself (not like any precision error of e-16 or the like)
+
+- Do they have the same covariance matrix?
+
+Yep, this they do. The differences are all at the scale of precision (e-15)
+
+- Which aspects of the data have changed differently?
+
+So generally this whitening is a scaling of the original data based on the correlation of its variables. This scaling removes the correlations between the variables and scales the variance to 1 (as we have seen now in all three steps with cov and the 1 diagonal matrix)!
+
+The three different types then apply it differently, so I would say the transformation is the same in the sense of covariance but the coordinate system this is transformed it is then different. So how the new variables relate to the old in a way.
+
+We see that the biggest correlation between the transformed and old data is for the ZCA, which is using a matrix that I before described as a scaled covariance matrix S of the data (with \^-1/2). So this data probably stays closer to the original, making it still interpretable.
+
+```{r, echo=TRUE}
+Z_pca  <- Xc %*% t(W_PCA)
+Z_zca  <- Xc %*% t(W_ZCA)
+Z_chol <- Xc %*% t(L_inv)
+
+print("Transformed Observations")
+head(round(Xc, 3), 3)
+head(round(Z_pca, 3), 3)
+head(round(Z_zca, 3), 3)
+head(round(Z_chol, 3), 3)
+
+print("Transformed Observations - Max diffs")
+c(pca_vs_zca  = max(abs(Z_pca - Z_zca)),
+  pca_vs_chol = max(abs(Z_pca - Z_chol)),
+  zca_vs_chol = max(abs(Z_zca - Z_chol)))
+
+print("Comparing the covs")
+c(pca  = max(abs(cov(Z_pca)  - diag(5))),
+  zca  = max(abs(cov(Z_zca)  - diag(5))),
+  chol = max(abs(cov(Z_chol) - diag(5))))
+
+print("How correlated are the original data and the transformed one?")
+round(cor(Xc, Z_pca), 2)
+round(cor(Xc, Z_zca), 2)
+round(cor(Xc, Z_chol), 2)
+
+print("Maybe the diagonals still?")
+round(rbind(pca  = diag(cor(Xc, Z_pca)),
+            zca  = diag(cor(Xc, Z_zca)),
+            chol = diag(cor(Xc, Z_chol))), 3)
+
+print("Checking the strucutre of the whitening matrices" )
+round(W_PCA, 3)
+round(W_ZCA, 3)
+round(L_inv, 3)
+
+```
+
+### 6. Show mathematically that if W is a whitening matrix and R is any orthogonal matrix, then RW is also a whitening matrix.
+
+Definition:
+
+A matrix W is a whitening matrix if the transformed observations
+
+$$
+ Z = XW^T
+$$
+
+have identity covariance:
+
+$$
+ Cov(Z) = WSW^T = I_p
+$$
+
+Then:
+
+$$
+Cov(X(RW)^T) = RW S (RW)^T = RWSW^TR^T = RI_pR^T = RR^T = I_p
+$$
+
+R here is essentially doing the same as PCA in the beginning where we effectively did a rotation/reflection with the orthogonal Q matrix (as R is also orthogonal). Applying R only rotates/reflects the already whitened data, and since the identity covariance is invariant under orthogonal transformations ($R I R^T = I$), the result stays white, producing another non-unique result (although in the covariance we get the identity covariance which is the design goal anyhow). There are unlimited results, as there are infinitely orthogonal matrices.
+
+# 7. More difficult dataset
+
+Re-centre the data and investigate:
+
+- the eigenvalues of S;
+
+  - The fifth eigenvalue is e-15 which is expected since it is almost a linear combination of the first one, the others are perfectly okay and close to the previous order of magnitude.
+
+- kappa(S);
+
+  - So the kappas are all e15, so they point to a very ill-conditioned problem. Meaning small perturbations in the data (so also rounding errors!) can lead to larger changes in the solution.
+
+- the three whitening transformations;
+
+  - All three whitening matrices contain very large entries because there is some inversion of S involved (for L, you have one time 9.81\* 10\^-8 which translates into order 10°7 for the inverse)
+
+- the covariance matrices after whitening.
+
+  - The "quality" has deteriorated. They are quite far off from fulfilling the identity covariance $Cov(Z) = I_p$
+
+  - This is all coming from the introduction of the correlation between 1 and 5 as one can see quite well in the covariance matrices at the end where almost all diagonal entries are 1
+
+    **What numerical difficulties do you observe?**
+
+  - S is really close to being singular, but not yet. But this still amplifies the values of the Z matrices, making it really volatile for small perturbations in the input (rounding errors as well as already mentioned)
+
+  - I did not check for errors in the code explicitly, so it could break in case we really get close to singularity or rather a small perturbations pushes us there.
+
+```{r, echo=TRUE}
+# lets keep the original X separate if we go up again
+X_bad <- X
+X_bad[, 5] <- X_bad[, 1] + 1e-7 * rnorm(n)
+
+Xc_bad <- scale(X_bad, center = TRUE, scale = FALSE)
+S_bad <- crossprod(Xc_bad) / (n - 1)
+
+eig_bad <- eigen(S_bad, symmetric = TRUE)
+lambdas_bad <- eig_bad$values
+Qs_bad <- eig_bad$vectors
+
+lambdas_bad
+lambdas
+
+c(kappa_est   = kappa(S_bad),
+  kappa_exact = kappa(S_bad, exact = TRUE),
+  ratio       = max(lambdas_bad) / min(lambdas_bad),
+  inv_eps     = 1 / .Machine$double.eps)
+
+lambdas_bad^(-1/2)
+
+# PCA
+W_PCA_bad <- diag(lambdas_bad^(-1/2)) %*% t(Qs_bad)
+Z_pca_bad <- Xc_bad %*% t(W_PCA_bad)
+
+# ZCA
+W_ZCA_bad <- Qs_bad %*% diag(lambdas_bad^(-1/2)) %*% t(Qs_bad)
+Z_zca_bad <- Xc_bad %*% t(W_ZCA_bad)
+
+# Cholesky
+L_bad <- t(chol(S_bad))
+L_inv_bad  <- forwardsolve(L_bad, diag(5))
+Z_chol_bad <- Xc_bad %*% t(L_inv_bad)
+diag(L_bad)
+
+# there are null values
+dev_I <- function(M) max(abs(M - diag(5)))
+
+rbind(
+  WSWt  = c(pca  = dev_I(W_PCA_bad %*% S_bad %*% t(W_PCA_bad)),
+            zca  = dev_I(W_ZCA_bad %*% S_bad %*% t(W_ZCA_bad)),
+            chol = dev_I(L_inv_bad %*% S_bad %*% t(L_inv_bad))),
+  cov_Z = c(pca  = dev_I(cov(Z_pca_bad)),
+            zca  = dev_I(cov(Z_zca_bad)),
+            chol = dev_I(cov(Z_chol_bad)))
+)
+
+# same checks for the "good" X from before
+rbind(
+  good = c(pca  = dev_I(cov(Z_pca)),
+           zca  = dev_I(cov(Z_zca)),
+           chol = dev_I(cov(Z_chol)))
+)
+
+c(pca  = max(abs(W_PCA_bad)),
+  zca  = max(abs(W_ZCA_bad)),
+  chol = max(abs(L_inv_bad)))
+
+round(cov(Z_pca_bad), 3)
+round(cov(Z_zca_bad), 3)
+round(cov(Z_chol_bad), 3)
+```
+
+# 8. Suppose one eigenvalue of S is numerically zero. Suggest at least two reasonable ways to proceed if whitening is still required. Discuss both the numerical and statistical consequences.
+
+1.  **Dimensionality reduction:**
+
+    Keep only dimensions of PCA/ZCA (so truncating) where the lambda/eigenvalue is clearly above 0 (e.g. by defining a threshold) and only use those for the whitening process
+
+    1.  Numerical consequence: The blown scaling factor of around 10\^7 that we saw before will not be present anymore. Kappa hence would point to a well-conditioned issue.
+    2.  Statistical consequence: Since we removed at least one dimension Cov(Z) should only be I_r (with r\<p) anymore. With ZCA in the last example we would lose even two columns (as the influence was reflected in both col 1 and 5!)
+
+2.  **Removing a variable in the beginning:**
+
+    Drop the near linear dependent variables from the beginning (i.e. here $X_5$)
+
+    1.  Numerical consequence: Similar to before.
+    2.  Statistical consequence: The identity covariance holds (also with reduced dimension ofc). Since we only remove "near linear dependent" variables we have almost no information lost since e.g. $X_5 \approx X_1$. Before we remove a linear combination, here really already the original variable, making it probably a bit more interpretable.

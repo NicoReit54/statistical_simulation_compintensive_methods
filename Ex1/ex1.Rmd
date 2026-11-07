@@ -1,0 +1,125 @@
+---
+title: "Exercise 1"
+author: "Nico Reiterer"
+date: "November 2026"
+output: pdf_document
+---
+
+# Exercise 1 - Variance after a change of origin:
+
+### Tasks 1 - 3
+
+```{r, echo=TRUE}
+set.seed(1)
+z <- rnorm(100000, mean = 0, sd = 3)
+offsets <- c(0, 1e4, 1e8, 1e12, 1e14)
+
+# define the algorithms
+## two-pass variance 
+two_pass <- function(x) {
+  x_bar <- mean(x)
+  return(sum((x - x_bar)^2) / (length(x) - 1))
+}
+
+## one-pass variance
+one_pass <- function(x) {
+  n <- length(x)
+  sum_x  <- sum(x)
+  sum_x2 <- sum(x^2)
+  (sum_x2 - sum_x^2 / n) / (n - 1)
+}
+
+# prep the df for caluclating later
+results <- data.frame(
+  a = numeric(),
+  `var(x)` = numeric(),
+  `two-pass` = numeric(),
+  `one-pass` = numeric(),
+  check.names = FALSE
+)
+
+for (a in offsets){
+  x <- a + z
+
+  new_row <- data.frame(
+    a = a,
+    `var(x)` = var(x),
+    `two-pass`= two_pass(x),
+    `one-pass` = one_pass(x),
+    check.names = FALSE)
+
+  # Append the row
+  results <- rbind(results, new_row)
+}
+
+results
+```
+
+### 4. Compare each result with var(z). At approximately what size of a does the one-pass formula begin to lose useful accuracy
+
+Down below you can see that one-pass at appr. size a = 1e8 begins to lose useful accuracy.
+
+```{r, echo=TRUE, fig.width=6, fig.height=4}
+true_var <- var(z)
+methods  <- c("var(x)", "two-pass", "one-pass")
+rel_err  <- sapply(methods, function(m) abs(results[[m]] - true_var) / true_var)
+
+
+cols <- c("#2a78d6", "#1baf7a", "#eb6834")  
+pchs <- c(16, 4, 17)
+ltys <- c(1, 2, 1)
+x_at <- ifelse(offsets == 0, 1, offsets)      # a = 0 shown at 10^0 on the log axis
+
+par(mar = c(4.5, 4.5, 2.5, 1), las = 1)
+matplot(x_at, rel_err, log = "xy", type = "b",
+        col = cols, pch = pchs, lty = ltys, lwd = 2, cex = 1.2,
+        xaxt = "n", yaxt = "n", 
+        xlab = "offset a", ylab = "relative error",
+        main = "Variance of a + z: error relative to var(z)")
+axis(1, at = x_at, labels = c("0", "1e4", "1e8", "1e12", "1e14"))
+y_ticks <- 10^seq(-16, 16, by = 4)
+axis(2, at = y_ticks, labels = parse(text = paste0("10^", log10(y_ticks))))
+legend("topleft", legend = methods, col = cols, pch = pchs, lty = ltys,
+       lwd = 2, bty = "n", cex = 0.9)
+```
+
+### 5. Explain why adding a constant leaves the variance unchanged mathematically but can still affect a particular numerical algorithm.
+
+Because a constant is constant essentially, it "changes the location but not the variance". You could also argue with the following where Y would be the constant. $$
+\operatorname{Var}(X + Y)
+= \operatorname{Var}(X) + \operatorname{Var}(Y) + 2\operatorname{Cov}(X,Y).
+$$ Y is constant, hence Var(Y) is zero. Further, there is no covariance/dependence between an added constant Y and X, hence COV(X,Y) must be 0 as well.
+
+But okay, why does it affect us here then? Because of machine precision: At a=1e8 we have for the one-pass a square of $x_i$ which leads to us the limit of double precision (1e16). Then the subtraction of such huge numbers leads to rounding errors that do not represent anymore the actual calculation. Two-pass is not as affected as we only square the the difference between the mean and the actual values. Still at big enough a, we can run into the limit described above!
+
+### 6. Suppose you receive measurements in nanometres with values around $10^{12}$, but the scientifically relevant variation is only a few units. Would you preprocess the data before computing descriptive statistics? If yes, what transformation would you use and why?
+
+As we have just shown, shifting by a constant is not influencing the statistics itself. Hence to have a proper view on the relativeness of the descriptive statistics, I would subtract by this common value of $10^{12}$. Still also things like the mean are only shifted then and can still be reproduced by readding that subtrahend at the end. 
+
+# Exercise 2 - A probability that disappears
+```{r, echo=TRUE}
+
+```
+
+
+
+
+```{r, echo=TRUE}
+
+```
+
+
+
+
+
+```{r, echo=TRUE}
+
+```
+
+
+
+
+
+```{r, echo=TRUE}
+
+```
